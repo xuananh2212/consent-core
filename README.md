@@ -217,3 +217,4 @@ Those are not Flow Manager or channel code and do not belong in the Core domain.
 
 The repository is an executable reference implementation, not a production certification. Production acceptance still requires security, performance, backup/PITR, HA/DR, legal retention and operational testing.
 # consent-core
+# consent-core
