@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { revokeConsent, searchConsents } from "./api.js";
+import Logo from "./Logo.jsx";
 
 const STATUS_LABEL = {
   REGISTERED: "Đã đăng ký",
@@ -112,7 +113,7 @@ export default function ConsentWorkspace({ session, onLogout }) {
     <div className="shell">
       <header className="topbar">
         <div className="brand-row">
-          <div className="mark">SHB</div>
+          <Logo />
           <div>
             <strong>Consent Admin</strong>
             <span>Tenant {session.tenantId}</span>

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import Logo from "./Logo.jsx";
 
 export default function LoginScreen({ onLogin }) {
   const [username, setUsername] = useState("");
@@ -22,7 +23,7 @@ export default function LoginScreen({ onLogin }) {
     <section className="login">
       <div className="login-brand">
         <div>
-          <div className="mark">SHB</div>
+          <Logo />
           <h1>Quản lý consent cho kênh Open Banking</h1>
           <p>Đăng nhập để xem các yêu cầu đồng ý đã ghi trên Consent Core.</p>
         </div>
