@@ -7,6 +7,7 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
 import vn.com.fis.consentcore.registry.domain.model.AcquisitionChannel;
@@ -39,7 +40,7 @@ class ConsentJpaEntity {
     EvidencePolicy evidencePolicy;
     @Enumerated(EnumType.STRING) @Column(name = "evidence_status", nullable = false, length = 40)
     EvidenceStatus evidenceStatus;
-    @Column(name = "trusted_source_authorization", nullable = false) boolean trustedSourceAuthorization;
+    @Column(name = "trusted_source_authorization", nullable = false) BigDecimal trustedSourceAuthorization;
     @Column(name = "authorization_reference", length = 300) String authorizationReference;
     @Column(name = "captured_at") Instant capturedAt;
     @Column(name = "captured_by", length = 200) String capturedBy;
@@ -81,7 +82,7 @@ class ConsentJpaEntity {
         externalConsentId = consent.externalConsentId();
         evidencePolicy = consent.evidencePolicy();
         evidenceStatus = consent.evidenceStatus();
-        trustedSourceAuthorization = consent.trustedSourceAuthorization();
+        trustedSourceAuthorization = consent.trustedSourceAuthorization() ? BigDecimal.ONE : BigDecimal.ZERO;
         authorizationReference = consent.authorizationReference();
         capturedAt = consent.capturedAt();
         capturedBy = consent.capturedBy();
@@ -101,7 +102,7 @@ class ConsentJpaEntity {
         return Consent.rehydrate(
                 id, tenantId, externalRequestId, consentType, subjectId, clientId, purpose, status,
                 validFrom, validUntil, acquisitionChannel, captureMethod, sourceSystem, externalConsentId,
-                evidencePolicy, evidenceStatus, trustedSourceAuthorization, authorizationReference,
+                evidencePolicy, evidenceStatus, trustedSourceAuthorization != null && trustedSourceAuthorization.signum() != 0, authorizationReference,
                 capturedAt, capturedBy, captureLocation, importBatchReference,
                 currentRevisionId, currentRevisionNo, decisionId, evidenceBundleId,
                 createdAt, updatedAt, createdBy, updatedBy, version == null ? 0L : version);

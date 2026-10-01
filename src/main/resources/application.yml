@@ -24,7 +24,7 @@ spring:
         format_sql: true
         dialect: org.hibernate.dialect.OracleDialect
         type:
-          preferred_boolean_jdbc_type: NUMERIC
+          preferred_uuid_jdbc_type: VARBINARY
   jackson:
     default-property-inclusion: non_null
     time-zone: UTC
