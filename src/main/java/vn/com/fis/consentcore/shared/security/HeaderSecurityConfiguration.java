@@ -1,0 +1,21 @@
+package vn.com.fis.consentcore.shared.security;
+
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.web.SecurityFilterChain;
+
+@Configuration(proxyBeanMethods = false)
+@ConditionalOnProperty(name = "consent.security.mode", havingValue = "header", matchIfMissing = true)
+class HeaderSecurityConfiguration {
+    @Bean
+    SecurityFilterChain headerSecurityFilterChain(HttpSecurity http) throws Exception {
+        return http
+                .csrf(csrf -> csrf.disable())
+                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .authorizeHttpRequests(authorize -> authorize.anyRequest().permitAll())
+                .build();
+    }
+}

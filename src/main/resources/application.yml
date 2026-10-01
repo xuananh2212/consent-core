@@ -1,0 +1,97 @@
+spring:
+  application:
+    name: consent-core
+  datasource:
+    url: ${CONSENT_DB_URL:jdbc:oracle:thin:@//localhost:1521/XEPDB1}
+    username: ${CONSENT_DB_USERNAME:core_admin}
+    password: ${CONSENT_DB_PASSWORD:abc123}
+    driver-class-name: oracle.jdbc.OracleDriver
+    hikari:
+      maximum-pool-size: ${CONSENT_DB_POOL_SIZE:10}
+      minimum-idle: 2
+      connection-timeout: 30000
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    show-sql: true
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+        order_inserts: true
+        order_updates: true
+        format_sql: true
+        dialect: org.hibernate.dialect.OracleDialect
+        type:
+          preferred_boolean_jdbc_type: NUMERIC
+  jackson:
+    default-property-inclusion: non_null
+    time-zone: UTC
+  servlet:
+    multipart:
+      max-file-size: ${CONSENT_EVIDENCE_MAX_FILE_SIZE:25MB}
+      max-request-size: ${CONSENT_EVIDENCE_MAX_REQUEST_SIZE:26MB}
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
+    tags-sorter: alpha
+
+server:
+  port: ${SERVER_PORT:8081}
+  shutdown: graceful
+  error:
+    include-message: never
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: when_authorized
+
+consent:
+  security:
+    mode: ${CONSENT_SECURITY_MODE:header}
+    tenant-claim: ${CONSENT_TENANT_CLAIM:tenant_id}
+    actor-type-claim: ${CONSENT_ACTOR_TYPE_CLAIM:actor_type}
+  policy:
+    default-max-validity-days: ${CONSENT_DEFAULT_MAX_VALIDITY_DAYS:3650}
+  reference:
+    enforce-permission-catalog: ${CONSENT_ENFORCE_PERMISSION_CATALOG:false}
+  evidence:
+    verification-requires-clean-malware-scan: ${CONSENT_EVIDENCE_REQUIRE_CLEAN_SCAN:false}
+    retention-job-enabled: ${CONSENT_EVIDENCE_RETENTION_JOB_ENABLED:true}
+    retention-cron: ${CONSENT_EVIDENCE_RETENTION_CRON:0 45 2 * * *}
+    retention-batch-size: ${CONSENT_EVIDENCE_RETENTION_BATCH_SIZE:50}
+    storage:
+      type: ${CONSENT_EVIDENCE_STORAGE_TYPE:local}
+      local-root: ${CONSENT_EVIDENCE_LOCAL_ROOT:./data/evidence}
+  outbox:
+    enabled: ${CONSENT_OUTBOX_ENABLED:true}
+    batch-size: ${CONSENT_OUTBOX_BATCH_SIZE:50}
+    fixed-delay-ms: ${CONSENT_OUTBOX_FIXED_DELAY_MS:1000}
+    max-attempts: ${CONSENT_OUTBOX_MAX_ATTEMPTS:10}
+  maintenance:
+    expiry-enabled: ${CONSENT_EXPIRY_JOB_ENABLED:true}
+    expiry-fixed-delay-ms: ${CONSENT_EXPIRY_JOB_DELAY_MS:60000}
+    cleanup-enabled: ${CONSENT_CLEANUP_JOB_ENABLED:true}
+    cleanup-cron: ${CONSENT_CLEANUP_CRON:0 15 2 * * *}
+    published-outbox-retention-days: ${CONSENT_OUTBOX_RETENTION_DAYS:14}
+  extensions:
+    enabled: ${CONSENT_EXTENSIONS_ENABLED:true}
+
+logging:
+  level:
+    root: DEBUG
+    vn.com.fis.consentcore: DEBUG
+    org.hibernate.SQL: DEBUG
+    org.hibernate.orm.jdbc.bind: TRACE

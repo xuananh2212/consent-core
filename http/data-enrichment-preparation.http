@@ -1,0 +1,219 @@
+### Generic Consent Data Enrichment + Flow Manager prepare demo
+### Select the "local" environment from http/client.env.json.
+### ACCOUNT_INFORMATION / ACCOUNT_LIST below are DEMO configuration values, not hard-coded framework types.
+
+### 1. Ensure demo consent type exists in Reference & Configuration
+POST {{baseUrl}}/api/v1/admin/reference/consent-types
+Content-Type: application/json
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{actorId}}
+X-Actor-Type: {{actorType}}
+X-Source-System: {{sourceSystem}}
+
+{
+  "code": "ACCOUNT_INFORMATION",
+  "displayName": "Account Information",
+  "description": "Demo consent type for generic data enrichment",
+  "schemaVersion": 1,
+  "contentSchema": {},
+  "active": true
+}
+
+### 2. Configure registration policy (no trusted auto-authorization)
+POST {{baseUrl}}/api/v1/admin/policies/consent-types
+Content-Type: application/json
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{actorId}}
+X-Actor-Type: {{actorType}}
+X-Source-System: {{sourceSystem}}
+
+{
+  "consentType": "ACCOUNT_INFORMATION",
+  "evidencePolicy": "NOT_REQUIRED",
+  "maxValidityDays": 365,
+  "requireSubject": true,
+  "allowTrustedAutoAuthorization": false,
+  "allowedChannels": ["WEB", "MOBILE"]
+}
+
+### 3. Configure a generic mock backend provider
+POST {{baseUrl}}/api/v1/admin/reference/data-enrichment/providers
+Content-Type: application/json
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{actorId}}
+X-Actor-Type: {{actorType}}
+X-Source-System: {{sourceSystem}}
+
+{
+  "providerCode": "MOCK_ACCOUNT_BACKEND",
+  "providerType": "MOCK",
+  "adapterKey": "CONFIGURED_MOCK",
+  "endpointTemplate": null,
+  "httpMethod": null,
+  "credentialReference": null,
+  "timeoutMs": 1000,
+  "configuration": {
+    "schemaVersion": 1,
+    "candidates": [
+      {
+        "id": "A001",
+        "resourceType": "ACCOUNT",
+        "label": "Current account ****1234",
+        "attributes": {"currency": "VND", "productType": "CURRENT"}
+      },
+      {
+        "id": "A002",
+        "resourceType": "ACCOUNT",
+        "label": "Saving account ****5678",
+        "attributes": {"currency": "VND", "productType": "SAVING"}
+      }
+    ]
+  },
+  "active": true
+}
+
+### 4. Bind logical ACCOUNT_LIST to that provider for this demo consent type
+POST {{baseUrl}}/api/v1/admin/reference/data-enrichment/bindings
+Content-Type: application/json
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{actorId}}
+X-Actor-Type: {{actorType}}
+X-Source-System: {{sourceSystem}}
+
+{
+  "dataType": "ACCOUNT_LIST",
+  "consentTypeCode": "ACCOUNT_INFORMATION",
+  "providerCode": "MOCK_ACCOUNT_BACKEND",
+  "mappingProfileCode": null,
+  "priority": 1,
+  "configuration": {},
+  "active": true
+}
+
+### 5. Declare that ACCOUNT_INFORMATION needs ACCOUNT_LIST during PREPARE_AUTHORIZATION
+POST {{baseUrl}}/api/v1/admin/reference/data-enrichment/requirements
+Content-Type: application/json
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{actorId}}
+X-Actor-Type: {{actorType}}
+X-Source-System: {{sourceSystem}}
+
+{
+  "consentTypeCode": "ACCOUNT_INFORMATION",
+  "requirementCode": "accounts",
+  "resolutionPhase": "PREPARE_AUTHORIZATION",
+  "clientId": "tpp-001",
+  "requiredScopes": ["accounts"],
+  "dataType": "ACCOUNT_LIST",
+  "dataPurpose": "SELECTION",
+  "required": true,
+  "schemaVersion": 1,
+  "freshnessSeconds": 60,
+  "configuration": {
+    "minSelections": 1,
+    "maxSelections": 2,
+    "presentation": {"title": "Select accounts"}
+  },
+  "active": true
+}
+
+### 6. Register a consent with no final account resource yet
+POST {{baseUrl}}/api/v1/consents
+Content-Type: application/json
+Idempotency-Key: enrichment-register-demo-001
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: tpp-demo
+X-Actor-Type: SERVICE
+X-Correlation-Id: enrichment-demo-001
+X-Request-Id: enrichment-register-001
+X-Source-System: tpp-demo
+
+{
+  "externalRequestId": "enrichment-request-001",
+  "consentType": "ACCOUNT_INFORMATION",
+  "subjectId": "psu-001",
+  "clientId": "tpp-001",
+  "purpose": "Read selected account information",
+  "validFrom": "2026-08-15T00:00:00Z",
+  "validUntil": "2026-12-31T00:00:00Z",
+  "acquisitionChannel": "WEB",
+  "captureMethod": "IN_APP_CONFIRMATION",
+  "sourceSystem": "tpp-demo",
+  "externalConsentId": "enrichment-external-001",
+  "evidencePolicy": "NOT_REQUIRED",
+  "trustedSourceAuthorization": false,
+  "capturedAt": "2026-08-15T12:00:00Z",
+  "capturedBy": "tpp-demo",
+  "content": {
+    "purposeCode": "ACCOUNT_ACCESS",
+    "permissions": [
+      {"permissionCode": "READ_BALANCE", "attributes": {}}
+    ],
+    "resources": [],
+    "constraints": [],
+    "presentationSnapshot": {"title": "Account information consent"}
+  }
+}
+
+> {% client.global.set("enrichmentConsentId", response.body.id); %}
+
+### 7. First prepare: Core resolves backend data and asks Flow Manager/PSU for a selection
+### Expected: preparationStatus=SELECTION_REQUIRED, consent status remains REGISTERED.
+POST {{baseUrl}}/internal/v1/consents/{{enrichmentConsentId}}/prepare-authorization
+Content-Type: application/json
+Idempotency-Key: enrichment-prepare-demo-001
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: flow-manager
+X-Actor-Type: SERVICE
+X-Correlation-Id: enrichment-demo-001
+X-Source-System: flow-manager
+
+{
+  "clientId": "tpp-001",
+  "scopes": ["accounts", "balances"],
+  "subjectRef": "psu-001"
+}
+
+> {% client.global.set("selectionContextHash", response.body.selectionContextHash); %}
+
+### 8. Submit PSU selection with SAME prepare idempotency key and returned candidate-set hash
+### Core re-resolves backend data, validates selection, finalizes revision/hash and moves to AWAITING_AUTHORIZATION.
+POST {{baseUrl}}/internal/v1/consents/{{enrichmentConsentId}}/prepare-authorization
+Content-Type: application/json
+Idempotency-Key: enrichment-prepare-demo-001
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: flow-manager
+X-Actor-Type: SERVICE
+X-Correlation-Id: enrichment-demo-001
+X-Source-System: flow-manager
+
+{
+  "clientId": "tpp-001",
+  "scopes": ["accounts", "balances"],
+  "subjectRef": "psu-001",
+  "selectionContextHash": "{{selectionContextHash}}",
+  "selections": {
+    "accounts": ["A001"]
+  }
+}
+
+### 9. Read final decision presentation (now allowed)
+GET {{baseUrl}}/internal/v1/consents/{{enrichmentConsentId}}/presentation
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: flow-manager
+X-Actor-Type: SERVICE
+X-Source-System: flow-manager
+
+### 10. Verify final immutable content contains only selected A001
+GET {{baseUrl}}/api/v1/consents/{{enrichmentConsentId}}/revisions/current
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{actorId}}
+X-Actor-Type: {{actorType}}
+X-Source-System: {{sourceSystem}}
+
+### 11. Optional: list active enrichment configuration
+GET {{baseUrl}}/api/v1/admin/reference/data-enrichment/requirements?consentTypeCode=ACCOUNT_INFORMATION&resolutionPhase=PREPARE_AUTHORIZATION
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{actorId}}
+X-Actor-Type: {{actorType}}
+X-Source-System: {{sourceSystem}}

@@ -1,0 +1,687 @@
+### Consent Core end-to-end smoke tests for IntelliJ HTTP Client
+### Select the "local" environment from http/client.env.json (baseUrl, tenantId, actorId, actorType, sourceSystem).
+###
+### Sections
+###   A. Policies                        (1)
+###   B. Browser flow as Flow Manager    (B1 - B9)   subject bound at PREPARE
+###   C. App-to-App flow as Flow Manager (C1 - C7)   subject bound at AUTHORIZE / REJECT
+###   D. Negative checks                 (D1 - D4)
+###   E. Trusted partner consent         (E1 - E5)
+###   F. Evidence-required branch consent(F1 - F8)
+###   G. Operations                      (G1 - G3)
+###
+### validFrom / validUntil of the sample consents must contain "now" (Core rejects authorize outside the
+### validity window): adjust the dates when they are in the past.
+###
+### Flow Manager calls (/internal/v1/**) must use the Flow Manager service identity. In header mode
+### Core requires X-Source-System to be equal to interaction.sourceSystem of authorize/reject, so both
+### use {{fmSource}} below (the value Flow Manager's RestConsentCoreAdapter sends).
+
+@fmActor = svc:consent-flow-manager
+@fmSource = CONSENT_FLOW_MANAGER
+@tppClient = tpp-web
+@issuer = http://localhost:8080/realms/open-banking
+
+###############################################################################
+### A. POLICIES
+###############################################################################
+
+### 1. Consent-type policy shared by browser, app-to-app and trusted partner consents.
+###    requireSubject=false: a TPP registers the consent before the PSU is known.
+###    The trusted partner consent (E) still sends subjectId, which is allowed.
+POST {{baseUrl}}/api/v1/admin/policies/consent-types
+Content-Type: application/json
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{actorId}}
+X-Actor-Type: {{actorType}}
+X-Source-System: {{sourceSystem}}
+
+{
+  "consentType": "ACCOUNT_INFORMATION",
+  "evidencePolicy": "NOT_REQUIRED",
+  "maxValidityDays": 365,
+  "requireSubject": false,
+  "allowTrustedAutoAuthorization": true,
+  "allowedChannels": ["WEB", "MOBILE", "APP_TO_APP", "PARTNER"]
+}
+
+### Expected: 201 Created, body = policy id
+
+###############################################################################
+### B. BROWSER FLOW (what Flow Manager does after the PSU logged in at Keycloak)
+###    REGISTERED (no subject) --prepare(BROWSER_REDIRECT, subjectRef)--> AWAITING_AUTHORIZATION (subject bound)
+###    --authorize--> AUTHORIZED
+###############################################################################
+
+### B1. TPP registers a consent WITHOUT subjectId
+POST {{baseUrl}}/api/v1/consents
+Content-Type: application/json
+Idempotency-Key: browser-register-{{$uuid}}
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{tppClient}}
+X-Actor-Type: SERVICE
+X-Source-System: {{tppClient}}
+
+{
+  "externalRequestId": "browser-{{$uuid}}",
+  "consentType": "ACCOUNT_INFORMATION",
+  "clientId": "{{tppClient}}",
+  "purpose": "Read account information",
+  "validFrom": "2026-09-01T00:00:00Z",
+  "validUntil": "2026-12-01T00:00:00Z",
+  "acquisitionChannel": "WEB",
+  "captureMethod": "IN_APP_CONFIRMATION",
+  "sourceSystem": "{{tppClient}}",
+  "evidencePolicy": "NOT_REQUIRED",
+  "trustedSourceAuthorization": false,
+  "content": {
+    "purposeCode": "ACCOUNT_ACCESS",
+    "permissions": [ {"permissionCode": "READ_BALANCE", "attributes": {}} ],
+    "resources": [ {"resourceType": "ACCOUNT", "resourceId": "account-001", "attributes": {"currency": "VND"}} ],
+    "constraints": [ {"constraintType": "ACCESS_FREQUENCY", "operator": "LTE", "value": 4} ],
+    "obligations": [],
+    "presentationSnapshot": {"title": "Chia sẻ thông tin tài khoản", "language": "vi"}
+  }
+}
+
+> {%
+    client.global.set("browserConsentId", response.body.id);
+    client.test("registered without subject", () => {
+        client.assert(response.status === 201, "expected 201");
+        client.assert(response.body.status === "REGISTERED", "expected REGISTERED");
+        client.assert(response.body.subjectId == null, "subjectId must be null");
+    });
+%}
+
+### B2. FM: authorization context before prepare (subjectRef null, presentationReady false)
+GET {{baseUrl}}/internal/v1/consents/{{browserConsentId}}/authorization-context
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{fmActor}}
+X-Actor-Type: SERVICE
+X-Source-System: {{fmSource}}
+
+### B3. FM: prepare with interactionMode=BROWSER_REDIRECT -> subject is bound here
+POST {{baseUrl}}/internal/v1/consents/{{browserConsentId}}/prepare-authorization
+Content-Type: application/json
+Idempotency-Key: prep:browser-{{browserConsentId}}:0
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{fmActor}}
+X-Actor-Type: SERVICE
+X-Source-System: {{fmSource}}
+
+{
+  "clientId": "{{tppClient}}",
+  "scopes": ["openid", "accounts"],
+  "subjectRef": "psu-001",
+  "interactionMode": "BROWSER_REDIRECT"
+}
+
+> {%
+    client.global.set("browserVersion", response.body.authorizationContext.consentVersion);
+    client.global.set("browserRevision", response.body.authorizationContext.currentRevisionNo);
+    client.global.set("browserHash", response.body.authorizationContext.currentContentHash);
+    client.test("prepared and subject bound", () => {
+        client.assert(response.body.preparationStatus === "PREPARED", "expected PREPARED");
+        client.assert(response.body.authorizationContext.status === "AWAITING_AUTHORIZATION", "expected AWAITING_AUTHORIZATION");
+        client.assert(response.body.authorizationContext.subjectRef === "psu-001", "subject must be bound at prepare");
+    });
+%}
+
+### B4. FM: presentation of the prepared revision (what consent-ui shows)
+GET {{baseUrl}}/internal/v1/consents/{{browserConsentId}}/presentation?revision={{browserRevision}}
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{fmActor}}
+X-Actor-Type: SERVICE
+X-Source-System: {{fmSource}}
+
+### B5. FM: PSU approves. subjectRef must equal the subject bound in B3.
+###     interaction.sourceInteractionRef = FM flowId; reuse the same value in B6.
+POST {{baseUrl}}/internal/v1/consents/{{browserConsentId}}/authorize
+Content-Type: application/json
+Idempotency-Key: authz:browser-{{browserConsentId}}
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{fmActor}}
+X-Actor-Type: SERVICE
+X-Source-System: {{fmSource}}
+
+{
+  "authorizationReference": "flow:browser-{{browserConsentId}}",
+  "expectedVersion": {{browserVersion}},
+  "expectedRevisionNo": {{browserRevision}},
+  "expectedContentHash": "{{browserHash}}",
+  "clientId": "{{tppClient}}",
+  "subjectRef": "psu-001",
+  "authentication": {
+    "subjectRef": "psu-001",
+    "issuer": "{{issuer}}",
+    "authenticationTime": "{{$isoTimestamp}}",
+    "acr": "1",
+    "amr": ["pwd"],
+    "verificationProfile": "KEYCLOAK_BROWSER_V1"
+  },
+  "interaction": {
+    "sourceSystem": "{{fmSource}}",
+    "sourceInteractionRef": "flow-browser-{{browserConsentId}}",
+    "authorizationServerRef": "keycloak:open-banking",
+    "asTransactionRef": "as-txn-browser-{{browserConsentId}}"
+  }
+}
+
+> {%
+    client.test("authorized", () => {
+        client.assert(response.body.status === "AUTHORIZED", "expected AUTHORIZED");
+        client.assert(response.body.subjectId === "psu-001", "subject unchanged");
+    });
+%}
+
+### B6. FM: authorization-validation before Keycloak issues the code (expect valid=true)
+GET {{baseUrl}}/internal/v1/consents/{{browserConsentId}}/authorization-validation?clientId={{tppClient}}&subjectRef=psu-001&revisionNo={{browserRevision}}&contentHash={{browserHash}}&sourceInteractionRef=flow-browser-{{browserConsentId}}&authorizationServerRef=keycloak:open-banking&asTransactionRef=as-txn-browser-{{browserConsentId}}
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{fmActor}}
+X-Actor-Type: SERVICE
+X-Source-System: {{fmSource}}
+
+> {% client.test("valid", () => client.assert(response.body.valid === true, JSON.stringify(response.body.reasonCodes))); %}
+
+### B7. Consent after the decision
+GET {{baseUrl}}/api/v1/consents/{{browserConsentId}}
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{actorId}}
+X-Actor-Type: {{actorType}}
+X-Source-System: {{sourceSystem}}
+
+### B8. Decision capture: subject_id (decision_maker_id) = psu-001
+GET {{baseUrl}}/api/v1/consents/{{browserConsentId}}/decisions
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{actorId}}
+X-Actor-Type: {{actorType}}
+X-Source-System: {{sourceSystem}}
+
+### B9. Lifecycle history: REGISTERED -> AWAITING_AUTHORIZATION -> AUTHORIZED
+GET {{baseUrl}}/api/v1/consents/{{browserConsentId}}/history
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{actorId}}
+X-Actor-Type: {{actorType}}
+X-Source-System: {{sourceSystem}}
+
+###############################################################################
+### C. APP-TO-APP FLOW (the PSU is only known when they decide in the bank app)
+###    REGISTERED (no subject) --prepare(APP_TO_APP_REDIRECT, no subjectRef)--> AWAITING_AUTHORIZATION (no subject)
+###    --authorize/reject(subjectRef)--> AUTHORIZED / REJECTED (subject bound)
+###############################################################################
+
+### C1. TPP registers a consent WITHOUT subjectId (app-to-app channel)
+POST {{baseUrl}}/api/v1/consents
+Content-Type: application/json
+Idempotency-Key: app-register-{{$uuid}}
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{tppClient}}
+X-Actor-Type: SERVICE
+X-Source-System: {{tppClient}}
+
+{
+  "externalRequestId": "app-{{$uuid}}",
+  "consentType": "ACCOUNT_INFORMATION",
+  "clientId": "{{tppClient}}",
+  "purpose": "Read account information",
+  "validFrom": "2026-09-01T00:00:00Z",
+  "validUntil": "2026-12-01T00:00:00Z",
+  "acquisitionChannel": "APP_TO_APP",
+  "captureMethod": "IN_APP_CONFIRMATION",
+  "sourceSystem": "{{tppClient}}",
+  "evidencePolicy": "NOT_REQUIRED",
+  "trustedSourceAuthorization": false,
+  "content": {
+    "purposeCode": "ACCOUNT_ACCESS",
+    "permissions": [ {"permissionCode": "READ_BALANCE", "attributes": {}} ],
+    "resources": [ {"resourceType": "ACCOUNT", "resourceId": "account-001", "attributes": {"currency": "VND"}} ],
+    "constraints": [],
+    "obligations": [],
+    "presentationSnapshot": {"title": "Chia sẻ thông tin tài khoản", "language": "vi"}
+  }
+}
+
+> {% client.global.set("appConsentId", response.body.id); %}
+
+### C2. FM: prepare with interactionMode=APP_TO_APP_REDIRECT and NO subjectRef
+POST {{baseUrl}}/internal/v1/consents/{{appConsentId}}/prepare-authorization
+Content-Type: application/json
+Idempotency-Key: prep:app-{{appConsentId}}:0
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{fmActor}}
+X-Actor-Type: SERVICE
+X-Source-System: {{fmSource}}
+
+{
+  "clientId": "{{tppClient}}",
+  "scopes": ["openid", "accounts"],
+  "interactionMode": "APP_TO_APP_REDIRECT"
+}
+
+> {%
+    client.global.set("appVersion", response.body.authorizationContext.consentVersion);
+    client.global.set("appRevision", response.body.authorizationContext.currentRevisionNo);
+    client.global.set("appHash", response.body.authorizationContext.currentContentHash);
+    client.test("prepared without subject", () => {
+        client.assert(response.body.preparationStatus === "PREPARED", "expected PREPARED");
+        client.assert(response.body.authorizationContext.subjectRef == null, "subject must still be null");
+    });
+%}
+
+### C3. FM: presentation shown in the bank app
+GET {{baseUrl}}/internal/v1/consents/{{appConsentId}}/presentation?revision={{appRevision}}
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{fmActor}}
+X-Actor-Type: SERVICE
+X-Source-System: {{fmSource}}
+
+### C4. FM: PSU approves in the bank app -> subject bound here (from the Bank IAM assertion)
+POST {{baseUrl}}/internal/v1/consents/{{appConsentId}}/authorize
+Content-Type: application/json
+Idempotency-Key: authz:app-{{appConsentId}}
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{fmActor}}
+X-Actor-Type: SERVICE
+X-Source-System: {{fmSource}}
+
+{
+  "authorizationReference": "flow:app-{{appConsentId}}",
+  "expectedVersion": {{appVersion}},
+  "expectedRevisionNo": {{appRevision}},
+  "expectedContentHash": "{{appHash}}",
+  "clientId": "{{tppClient}}",
+  "subjectRef": "psu-002",
+  "authentication": {
+    "subjectRef": "psu-002",
+    "issuer": "https://iam.bank.example",
+    "authenticationTime": "{{$isoTimestamp}}",
+    "acr": "urn:bank:acr:strong",
+    "amr": ["bio"],
+    "evidenceRef": "bank-iam-assertion-001",
+    "verificationProfile": "BANK_IAM_APP_V1"
+  },
+  "interaction": {
+    "sourceSystem": "{{fmSource}}",
+    "sourceInteractionRef": "flow-app-{{appConsentId}}",
+    "authorizationServerRef": "keycloak:open-banking",
+    "asTransactionRef": "as-txn-app-{{appConsentId}}"
+  }
+}
+
+> {%
+    client.test("authorized and subject bound at decision", () => {
+        client.assert(response.body.status === "AUTHORIZED", "expected AUTHORIZED");
+        client.assert(response.body.subjectId === "psu-002", "subject must be bound at authorize");
+    });
+%}
+
+### C5. FM: authorization-validation (expect valid=true)
+GET {{baseUrl}}/internal/v1/consents/{{appConsentId}}/authorization-validation?clientId={{tppClient}}&subjectRef=psu-002&revisionNo={{appRevision}}&contentHash={{appHash}}&sourceInteractionRef=flow-app-{{appConsentId}}&authorizationServerRef=keycloak:open-banking
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{fmActor}}
+X-Actor-Type: SERVICE
+X-Source-System: {{fmSource}}
+
+### C6. Reject variant: register a second app-to-app consent (re-run C1 + C2 first), then:
+###     the PSU rejects in the bank app -> REJECTED, subject bound as well
+POST {{baseUrl}}/internal/v1/consents/{{appConsentId}}/reject
+Content-Type: application/json
+Idempotency-Key: reject:app-{{appConsentId}}
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{fmActor}}
+X-Actor-Type: SERVICE
+X-Source-System: {{fmSource}}
+
+{
+  "reasonCode": "PSU_REJECTED",
+  "reasonDetail": "Rejected in the bank app",
+  "expectedVersion": {{appVersion}},
+  "expectedRevisionNo": {{appRevision}},
+  "expectedContentHash": "{{appHash}}",
+  "clientId": "{{tppClient}}",
+  "subjectRef": "psu-002",
+  "authentication": {
+    "subjectRef": "psu-002",
+    "issuer": "https://iam.bank.example",
+    "authenticationTime": "{{$isoTimestamp}}",
+    "acr": "urn:bank:acr:strong",
+    "amr": ["bio"],
+    "verificationProfile": "BANK_IAM_APP_V1"
+  },
+  "interaction": {
+    "sourceSystem": "{{fmSource}}",
+    "sourceInteractionRef": "flow-app-{{appConsentId}}",
+    "authorizationServerRef": "keycloak:open-banking",
+    "asTransactionRef": "as-txn-app-{{appConsentId}}"
+  }
+}
+
+### C7. Decision capture of the app-to-app consent
+GET {{baseUrl}}/api/v1/consents/{{appConsentId}}/decisions
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{actorId}}
+X-Actor-Type: {{actorType}}
+X-Source-System: {{sourceSystem}}
+
+###############################################################################
+### D. NEGATIVE CHECKS (each must answer 4xx with code CONSENT_AUTHORIZATION_BINDING_INVALID)
+###    D1 / D2: the subject rule is checked before the consent state, they can run at any time.
+###    D3 / D4: need a consent in AWAITING_AUTHORIZATION bound to psu-001 -> re-run B1 + B3 first.
+###############################################################################
+
+### D1. BROWSER_REDIRECT without subjectRef -> "subjectRef is required to prepare a BROWSER_REDIRECT interaction"
+POST {{baseUrl}}/internal/v1/consents/{{browserConsentId}}/prepare-authorization
+Content-Type: application/json
+Idempotency-Key: prep:neg-browser-{{$uuid}}
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{fmActor}}
+X-Actor-Type: SERVICE
+X-Source-System: {{fmSource}}
+
+{ "clientId": "{{tppClient}}", "interactionMode": "BROWSER_REDIRECT" }
+
+### D2. APP_TO_APP_REDIRECT with subjectRef -> "subjectRef must not be sent before the PSU decides ..."
+POST {{baseUrl}}/internal/v1/consents/{{appConsentId}}/prepare-authorization
+Content-Type: application/json
+Idempotency-Key: prep:neg-app-{{$uuid}}
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{fmActor}}
+X-Actor-Type: SERVICE
+X-Source-System: {{fmSource}}
+
+{ "clientId": "{{tppClient}}", "subjectRef": "psu-002", "interactionMode": "APP_TO_APP_REDIRECT" }
+
+### D3. Browser consent (bound to psu-001 at B3) decided by another PSU
+###     -> "subjectRef does not match consent subject"
+POST {{baseUrl}}/internal/v1/consents/{{browserConsentId}}/authorize
+Content-Type: application/json
+Idempotency-Key: authz:neg-{{$uuid}}
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{fmActor}}
+X-Actor-Type: SERVICE
+X-Source-System: {{fmSource}}
+
+{
+  "authorizationReference": "flow:neg-{{browserConsentId}}",
+  "expectedVersion": {{browserVersion}},
+  "expectedRevisionNo": {{browserRevision}},
+  "expectedContentHash": "{{browserHash}}",
+  "clientId": "{{tppClient}}",
+  "subjectRef": "psu-999",
+  "authentication": {
+    "subjectRef": "psu-999", "issuer": "{{issuer}}", "authenticationTime": "{{$isoTimestamp}}",
+    "acr": "1", "amr": ["pwd"], "verificationProfile": "KEYCLOAK_BROWSER_V1"
+  },
+  "interaction": { "sourceSystem": "{{fmSource}}", "sourceInteractionRef": "flow-neg" }
+}
+
+### D4. X-Source-System different from interaction.sourceSystem
+###     -> "interaction sourceSystem does not match authenticated caller"
+POST {{baseUrl}}/internal/v1/consents/{{browserConsentId}}/authorize
+Content-Type: application/json
+Idempotency-Key: authz:neg-src-{{$uuid}}
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{fmActor}}
+X-Actor-Type: SERVICE
+X-Source-System: OTHER_SYSTEM
+
+{
+  "authorizationReference": "flow:neg-src",
+  "expectedVersion": {{browserVersion}},
+  "expectedRevisionNo": {{browserRevision}},
+  "expectedContentHash": "{{browserHash}}",
+  "clientId": "{{tppClient}}",
+  "subjectRef": "psu-001",
+  "authentication": {
+    "subjectRef": "psu-001", "issuer": "{{issuer}}", "authenticationTime": "{{$isoTimestamp}}",
+    "acr": "1", "amr": ["pwd"], "verificationProfile": "KEYCLOAK_BROWSER_V1"
+  },
+  "interaction": { "sourceSystem": "{{fmSource}}", "sourceInteractionRef": "flow-neg-src" }
+}
+
+###############################################################################
+### E. TRUSTED PARTNER CONSENT (auto-authorized at registration, subject known)
+###############################################################################
+
+### E1. Register trusted source
+POST {{baseUrl}}/api/v1/admin/policies/trusted-sources
+Content-Type: application/json
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{actorId}}
+X-Actor-Type: {{actorType}}
+X-Source-System: {{sourceSystem}}
+
+{
+  "sourceSystem": "trusted-partner",
+  "clientId": "tpp-001",
+  "allowedConsentTypes": ["ACCOUNT_INFORMATION"],
+  "validFrom": "2026-01-01T00:00:00Z",
+  "validUntil": "2030-01-01T00:00:00Z"
+}
+
+### E2. Register trusted consent; history REGISTERED -> AWAITING_AUTHORIZATION -> AUTHORIZED
+POST {{baseUrl}}/api/v1/consents
+Content-Type: application/json
+Idempotency-Key: trusted-{{$uuid}}
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: partner-adapter
+X-Actor-Type: SERVICE
+X-Correlation-Id: trusted-correlation-001
+X-Request-Id: trusted-request-001
+X-Source-System: trusted-partner
+
+{
+  "externalRequestId": "partner-request-{{$uuid}}",
+  "consentType": "ACCOUNT_INFORMATION",
+  "subjectId": "psu-001",
+  "clientId": "tpp-001",
+  "purpose": "Read account information",
+  "validFrom": "2026-09-01T00:00:00Z",
+  "validUntil": "2026-12-01T00:00:00Z",
+  "acquisitionChannel": "PARTNER",
+  "captureMethod": "PARTNER_ASSERTION",
+  "sourceSystem": "trusted-partner",
+  "externalConsentId": "partner-consent-{{$uuid}}",
+  "evidencePolicy": "NOT_REQUIRED",
+  "trustedSourceAuthorization": true,
+  "trustedAuthorizationReference": "trusted-proof-001",
+  "capturedAt": "2026-09-01T08:00:00Z",
+  "capturedBy": "trusted-adapter",
+  "captureLocation": "partner-session-001",
+  "content": {
+    "purposeCode": "ACCOUNT_ACCESS",
+    "permissions": [ {"permissionCode": "READ_BALANCE", "attributes": {}} ],
+    "resources": [ {"resourceType": "ACCOUNT", "resourceId": "account-001", "attributes": {"currency": "VND"}} ],
+    "constraints": [ {"constraintType": "ACCESS_FREQUENCY", "operator": "LTE", "value": 4} ],
+    "obligations": [ {"obligationType": "PURPOSE_LIMITATION", "parameters": {"purpose": "ACCOUNT_ACCESS"}} ],
+    "presentationSnapshot": {"title": "Account information consent", "language": "en"}
+  }
+}
+
+> {% client.global.set("trustedConsentId", response.body.id); %}
+
+### E3. Read trusted consent (status AUTHORIZED)
+GET {{baseUrl}}/api/v1/consents/{{trustedConsentId}}
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{actorId}}
+X-Actor-Type: {{actorType}}
+X-Source-System: {{sourceSystem}}
+
+### E4. Read canonical lifecycle history
+GET {{baseUrl}}/api/v1/consents/{{trustedConsentId}}/history
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{actorId}}
+X-Actor-Type: {{actorType}}
+X-Source-System: {{sourceSystem}}
+
+### E5. Read immutable content revision
+GET {{baseUrl}}/api/v1/consents/{{trustedConsentId}}/revisions/current
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{actorId}}
+X-Actor-Type: {{actorType}}
+X-Source-System: {{sourceSystem}}
+
+###############################################################################
+### F. EVIDENCE-REQUIRED BRANCH CONSENT (non Flow Manager channel)
+###############################################################################
+
+### F1. Policy for evidence-required branch consent (subject known at the counter)
+POST {{baseUrl}}/api/v1/admin/policies/consent-types
+Content-Type: application/json
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{actorId}}
+X-Actor-Type: {{actorType}}
+X-Source-System: {{sourceSystem}}
+
+{
+  "consentType": "PAPER_MANDATE",
+  "evidencePolicy": "REQUIRED",
+  "maxValidityDays": 365,
+  "requireSubject": true,
+  "allowTrustedAutoAuthorization": false,
+  "allowedChannels": ["BRANCH"]
+}
+
+### F2. Register evidence-required consent
+POST {{baseUrl}}/api/v1/consents
+Content-Type: application/json
+Idempotency-Key: paper-{{$uuid}}
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: teller-001
+X-Actor-Type: USER
+X-Correlation-Id: paper-correlation-001
+X-Request-Id: paper-request-001
+X-Source-System: branch-teller
+
+{
+  "externalRequestId": "paper-request-{{$uuid}}",
+  "consentType": "PAPER_MANDATE",
+  "subjectId": "psu-002",
+  "clientId": "bank-staff-app",
+  "purpose": "Account mandate",
+  "validFrom": "2026-09-01T00:00:00Z",
+  "validUntil": "2026-12-01T00:00:00Z",
+  "acquisitionChannel": "BRANCH",
+  "captureMethod": "SIGNED_PAPER",
+  "sourceSystem": "branch-teller",
+  "externalConsentId": "paper-consent-{{$uuid}}",
+  "evidencePolicy": "REQUIRED",
+  "trustedSourceAuthorization": false,
+  "capturedAt": "2026-09-01T08:30:00Z",
+  "capturedBy": "teller-001",
+  "captureLocation": "branch-HN-001/desk-02",
+  "content": {
+    "purposeCode": "ACCOUNT_MANDATE",
+    "permissions": [ {"permissionCode": "READ_BALANCE", "attributes": {}} ],
+    "resources": [ {"resourceType": "ACCOUNT", "resourceId": "account-002", "attributes": {}} ],
+    "constraints": [],
+    "presentationSnapshot": {"documentTemplate": "MANDATE-V1"}
+  }
+}
+
+> {% client.global.set("paperConsentId", response.body.id); %}
+
+### F3. Create staged evidence upload session
+POST {{baseUrl}}/api/v1/consents/{{paperConsentId}}/evidence/upload-sessions
+Content-Type: application/json
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: teller-001
+X-Actor-Type: USER
+X-Source-System: branch-teller
+
+{
+  "evidenceType": "SIGNED_PAPER",
+  "originalFilename": "sample-evidence.txt",
+  "mediaType": "text/plain",
+  "declaredSize": 95,
+  "metadata": {"documentType": "MANDATE"},
+  "retentionUntil": "2029-07-27T00:00:00Z"
+}
+
+> {% client.global.set("uploadSessionId", response.body.id); %}
+
+### F4. Upload content through the staged session
+POST {{baseUrl}}/api/v1/consents/{{paperConsentId}}/evidence/upload-sessions/{{uploadSessionId}}/content
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: teller-001
+X-Actor-Type: USER
+X-Source-System: branch-teller
+Content-Type: multipart/form-data; boundary=WebAppBoundary
+
+--WebAppBoundary
+Content-Disposition: form-data; name="file"; filename="sample-evidence.txt"
+Content-Type: text/plain
+
+< ./files/sample-evidence.txt
+--WebAppBoundary--
+
+> {% client.global.set("artifactId", response.body.id); %}
+
+### F5. Read current evidence bundle
+GET {{baseUrl}}/api/v1/consents/{{paperConsentId}}/evidence/bundle
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{actorId}}
+X-Actor-Type: {{actorType}}
+X-Source-System: {{sourceSystem}}
+
+> {% client.global.set("bundleId", response.body.id); %}
+
+### F6. Move consent to AWAITING_AUTHORIZATION
+POST {{baseUrl}}/api/v1/consents/{{paperConsentId}}/request-authorization
+Content-Type: application/json
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: teller-001
+X-Actor-Type: USER
+X-Source-System: branch-teller
+
+{"reasonCode": "EVIDENCE_REQUIRED"}
+
+### F7. Verify evidence
+POST {{baseUrl}}/api/v1/consents/{{paperConsentId}}/evidence/bundles/{{bundleId}}/verification
+Content-Type: application/json
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: verifier-001
+X-Actor-Type: USER
+X-Source-System: evidence-backoffice
+
+{
+  "artifactId": "{{artifactId}}",
+  "result": "VERIFIED",
+  "verificationMethod": "FOUR_EYES",
+  "verificationData": {"checker": "verifier-001"}
+}
+
+### F8. Authorize after evidence verification (non-FM REST authorize; subject was set at registration)
+POST {{baseUrl}}/api/v1/consents/{{paperConsentId}}/authorize
+Content-Type: application/json
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: psu-002
+X-Actor-Type: USER
+X-Source-System: branch-teller
+
+{"authorizationReference": "paper-decision-001"}
+
+###############################################################################
+### G. OPERATIONS
+###############################################################################
+
+### G1. Search consents (Oracle pagination: OFFSET ... FETCH NEXT)
+GET {{baseUrl}}/api/v1/consents?status=AUTHORIZED&page=0&size=20
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{actorId}}
+X-Actor-Type: {{actorType}}
+X-Source-System: {{sourceSystem}}
+
+### G2. Audit trail; look for BIND_CONSENT_SUBJECT (browser prepare) on the browser consent
+GET {{baseUrl}}/api/v1/admin/audit?aggregateType=Consent&page=0&size=50
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{actorId}}
+X-Actor-Type: {{actorType}}
+X-Source-System: {{sourceSystem}}
+
+### G3. Outbox operational summary
+GET {{baseUrl}}/api/v1/admin/outbox/summary
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{actorId}}
+X-Actor-Type: {{actorType}}
+X-Source-System: {{sourceSystem}}

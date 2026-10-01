@@ -1,0 +1,21 @@
+consent:
+  security:
+    mode: jwt
+  reference:
+    enforce-permission-catalog: true
+  evidence:
+    verification-requires-clean-malware-scan: true
+    storage:
+      type: ${CONSENT_EVIDENCE_STORAGE_TYPE}
+
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${CONSENT_JWT_ISSUER_URI}
+
+management:
+  endpoint:
+    health:
+      show-details: never

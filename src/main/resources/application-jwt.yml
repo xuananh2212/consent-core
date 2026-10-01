@@ -1,0 +1,9 @@
+consent:
+  security:
+    mode: jwt
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${CONSENT_JWT_ISSUER_URI:http://localhost:8081/realms/consent}

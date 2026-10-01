@@ -1,0 +1,2 @@
+Sample evidence content for local Consent Core testing.
+This is not a real legal document.

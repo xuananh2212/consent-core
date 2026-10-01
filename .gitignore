@@ -1,0 +1,9 @@
+target/
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.DS_Store
+.env
+logs/

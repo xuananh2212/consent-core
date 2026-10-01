@@ -1,0 +1,171 @@
+### Post-authentication eligibility gate demo
+### Flow Manager calls only prepare-authorization after PSU authentication.
+### Core selects POLICY checks by tenant + consentType + optional clientId + requiredScopes.
+
+### 1. Consent type
+POST {{baseUrl}}/api/v1/admin/reference/consent-types
+Content-Type: application/json
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{actorId}}
+X-Actor-Type: {{actorType}}
+X-Source-System: {{sourceSystem}}
+
+{
+  "code": "ELIGIBILITY_DEMO",
+  "displayName": "Eligibility Demo",
+  "description": "Demo post-authentication eligibility gate",
+  "schemaVersion": 1,
+  "contentSchema": {},
+  "active": true
+}
+
+### 2. Registration policy
+POST {{baseUrl}}/api/v1/admin/policies/consent-types
+Content-Type: application/json
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{actorId}}
+X-Actor-Type: {{actorType}}
+X-Source-System: {{sourceSystem}}
+
+{
+  "consentType": "ELIGIBILITY_DEMO",
+  "evidencePolicy": "NOT_REQUIRED",
+  "maxValidityDays": 365,
+  "requireSubject": true,
+  "allowTrustedAutoAuthorization": false,
+  "allowedChannels": ["WEB", "MOBILE"]
+}
+
+### 3. Mock backend returns normalized POLICY fact eligible=false
+POST {{baseUrl}}/api/v1/admin/reference/data-enrichment/providers
+Content-Type: application/json
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{actorId}}
+X-Actor-Type: {{actorType}}
+X-Source-System: {{sourceSystem}}
+
+{
+  "providerCode": "MOCK_SERVICE_STATUS",
+  "providerType": "MOCK",
+  "adapterKey": "CONFIGURED_MOCK",
+  "endpointTemplate": null,
+  "httpMethod": null,
+  "credentialReference": null,
+  "timeoutMs": 1000,
+  "configuration": {
+    "schemaVersion": 1,
+    "data": {"eligible": false}
+  },
+  "active": true
+}
+
+### 4. Bind logical SERVICE_REGISTRATION_STATUS to the backend provider
+POST {{baseUrl}}/api/v1/admin/reference/data-enrichment/bindings
+Content-Type: application/json
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{actorId}}
+X-Actor-Type: {{actorType}}
+X-Source-System: {{sourceSystem}}
+
+{
+  "dataType": "SERVICE_REGISTRATION_STATUS",
+  "consentTypeCode": "ELIGIBILITY_DEMO",
+  "providerCode": "MOCK_SERVICE_STATUS",
+  "mappingProfileCode": null,
+  "priority": 1,
+  "configuration": {},
+  "active": true
+}
+
+### 5. Configure post-auth check only for client tpp-eligibility and OAuth scope accounts
+POST {{baseUrl}}/api/v1/admin/reference/data-enrichment/requirements
+Content-Type: application/json
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: {{actorId}}
+X-Actor-Type: {{actorType}}
+X-Source-System: {{sourceSystem}}
+
+{
+  "consentTypeCode": "ELIGIBILITY_DEMO",
+  "requirementCode": "service-registration",
+  "resolutionPhase": "PREPARE_AUTHORIZATION",
+  "clientId": "tpp-eligibility",
+  "requiredScopes": ["accounts"],
+  "dataType": "SERVICE_REGISTRATION_STATUS",
+  "dataPurpose": "POLICY",
+  "required": true,
+  "schemaVersion": 1,
+  "freshnessSeconds": 60,
+  "configuration": {
+    "eligibility": {
+      "field": "eligible",
+      "reasonCode": "PSU_SERVICE_NOT_REGISTERED",
+      "messageKey": "consent.eligibility.service_not_registered",
+      "retryable": false
+    }
+  },
+  "active": true
+}
+
+### 6. Register consent
+POST {{baseUrl}}/api/v1/consents
+Content-Type: application/json
+Idempotency-Key: eligibility-register-demo-001
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: tpp-demo
+X-Actor-Type: SERVICE
+X-Correlation-Id: eligibility-demo-001
+X-Request-Id: eligibility-register-001
+X-Source-System: tpp-demo
+
+{
+  "externalRequestId": "eligibility-request-001",
+  "consentType": "ELIGIBILITY_DEMO",
+  "subjectId": "psu-001",
+  "clientId": "tpp-eligibility",
+  "purpose": "Eligibility gate demo",
+  "validFrom": "2026-08-16T00:00:00Z",
+  "validUntil": "2026-12-31T00:00:00Z",
+  "acquisitionChannel": "WEB",
+  "captureMethod": "IN_APP_CONFIRMATION",
+  "sourceSystem": "tpp-demo",
+  "externalConsentId": "eligibility-external-001",
+  "evidencePolicy": "NOT_REQUIRED",
+  "trustedSourceAuthorization": false,
+  "capturedAt": "2026-08-16T12:00:00Z",
+  "capturedBy": "tpp-demo",
+  "content": {
+    "purposeCode": "ACCOUNT_ACCESS",
+    "permissions": [{"permissionCode": "READ_ACCOUNT", "attributes": {}}],
+    "resources": [],
+    "constraints": [],
+    "presentationSnapshot": {"title": "Eligibility demo"}
+  }
+}
+
+> {% client.global.set("eligibilityConsentId", response.body.id); %}
+
+### 7. After PSU authentication: Flow Manager enters CONSENT_PREPARING and calls Core prepare only
+### Expected: HTTP 200, preparationStatus=DENIED, consent remains REGISTERED, presentationReady=false.
+POST {{baseUrl}}/internal/v1/consents/{{eligibilityConsentId}}/prepare-authorization
+Content-Type: application/json
+Idempotency-Key: eligibility-prepare-demo-001
+X-Tenant-Id: {{tenantId}}
+X-Actor-Id: flow-manager
+X-Actor-Type: SERVICE
+X-Correlation-Id: eligibility-demo-001
+X-Source-System: flow-manager
+
+{
+  "clientId": "tpp-eligibility",
+  "scopes": ["accounts", "balances"],
+  "subjectRef": "psu-001"
+}
+
+### Expected body includes:
+### "preparationStatus": "DENIED"
+### "reasonCode": "PSU_SERVICE_NOT_REGISTERED"
+### "messageKey": "consent.eligibility.service_not_registered"
+### "retryable": false
+### authorizationContext.status = REGISTERED
+### authorizationContext.presentationReady = false
