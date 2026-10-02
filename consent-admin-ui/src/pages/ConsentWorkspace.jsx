@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { revokeConsent, searchConsents } from "./api.js";
-import Logo from "./Logo.jsx";
+import { Button, Form, Input, Select } from "antd";
+import { revokeConsent, searchConsents } from "../api/consents.js";
+import Logo from "../components/Logo.jsx";
 
 const STATUS_LABEL = {
   REGISTERED: "Đã đăng ký",
@@ -49,8 +50,6 @@ function RevokeButton({ item, busy, onRevoke }) {
 
 export default function ConsentWorkspace({ session, onLogout }) {
   const [section, setSection] = useState(null);
-  const [status, setStatus] = useState("");
-  const [subjectId, setSubjectId] = useState("");
   const [applied, setApplied] = useState({ status: "", subjectId: "" });
   const [page, setPage] = useState(0);
   const [result, setResult] = useState(null);
@@ -63,7 +62,7 @@ export default function ConsentWorkspace({ session, onLogout }) {
     setBusy(true);
     setListError("");
     try {
-      const payload = await searchConsents(session, {
+      const payload = await searchConsents({
         status: applied.status,
         subjectId: applied.subjectId,
         page,
@@ -84,10 +83,9 @@ export default function ConsentWorkspace({ session, onLogout }) {
     if (section === "consents") load();
   }, [section, load]);
 
-  function applyFilter(event) {
-    event.preventDefault();
+  function applyFilter(values) {
     setPage(0);
-    setApplied({ status, subjectId: subjectId.trim() });
+    setApplied({ status: values.status || "", subjectId: (values.subjectId || "").trim() });
   }
 
   async function revoke(item) {
@@ -98,7 +96,7 @@ export default function ConsentWorkspace({ session, onLogout }) {
     setBusy(true);
     setActionError("");
     try {
-      await revokeConsent(session, item.id);
+      await revokeConsent(item.id);
       await load();
     } catch (error) {
       setActionError(error.message);
@@ -143,22 +141,26 @@ export default function ConsentWorkspace({ session, onLogout }) {
                 <p>{result ? `${result.totalElements} bản ghi` : "Đang tải dữ liệu từ Consent Core"}</p>
               </div>
             </div>
-            <form className="toolbar" onSubmit={applyFilter}>
-              <select id="status" value={status} onChange={(event) => setStatus(event.target.value)}>
-                <option value="">Mọi trạng thái</option>
-                {Object.entries(STATUS_LABEL).map(([value, label]) => (
-                  <option key={value} value={value}>{label}</option>
-                ))}
-              </select>
-              <input
-                id="subjectId"
-                placeholder="Lọc theo mã chủ thể, ví dụ psu-10001"
-                value={subjectId}
-                onChange={(event) => setSubjectId(event.target.value)}
-              />
-              <button className="btn primary" type="submit">Lọc</button>
-              <button className="btn ghost" type="button" onClick={load}>Tải lại</button>
-            </form>
+            <Form
+              className="filter-form"
+              layout="inline"
+              initialValues={{ status: "", subjectId: "" }}
+              onFinish={applyFilter}
+            >
+              <Form.Item name="status">
+                <Select
+                  options={[
+                    { value: "", label: "Mọi trạng thái" },
+                    ...Object.entries(STATUS_LABEL).map(([value, label]) => ({ value, label }))
+                  ]}
+                />
+              </Form.Item>
+              <Form.Item name="subjectId" className="filter-subject">
+                <Input allowClear placeholder="Lọc theo mã chủ thể, ví dụ psu-10001" />
+              </Form.Item>
+              <Button type="primary" htmlType="submit">Lọc</Button>
+              <Button onClick={load}>Tải lại</Button>
+            </Form>
             {listError ? <div className="error">{listError}</div> : null}
             {actionError ? <div className="error">{actionError}</div> : null}
             <div className="table-wrap">

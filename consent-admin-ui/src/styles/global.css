@@ -76,7 +76,8 @@ button { cursor: pointer; }
 .card h2 { margin: 0 0 6px; font-size: 26px; }
 .card .sub { margin: 0 0 22px; color: var(--muted); }
 label { display: block; margin: 14px 0 6px; font-size: 13px; font-weight: 600; }
-input, select {
+input:not([class*="ant-"]),
+select:not([class*="ant-"]) {
   width: 100%;
   border: 1px solid #d5dee7;
   background: #fff;
@@ -84,10 +85,14 @@ input, select {
   padding: 12px 14px;
   color: var(--ink);
 }
-input:focus, select:focus {
+input:not([class*="ant-"]):focus,
+select:not([class*="ant-"]):focus {
   outline: 2px solid rgba(227, 106, 18, 0.25);
   border-color: var(--orange);
 }
+.card .ant-form-item { margin-bottom: 14px; }
+.card .ant-form-item-label { padding-bottom: 4px; }
+.card .ant-form-item-label > label { margin: 0; height: auto; }
 .btn {
   border: 0;
   border-radius: 12px;
@@ -188,12 +193,19 @@ input:focus, select:focus {
 .page-head h1 { margin: 0; font-size: 28px; }
 .page-head p { margin: 6px 0 0; color: var(--muted); }
 
-.toolbar {
+.filter-form {
   display: grid;
-  grid-template-columns: 180px 1fr auto auto;
+  grid-template-columns: 180px minmax(0, 1fr) auto auto;
   gap: 10px;
   margin-bottom: 14px;
+  align-items: start;
 }
+.filter-form .ant-form-item { margin-inline-end: 0; margin-bottom: 0; }
+.filter-subject,
+.filter-subject .ant-form-item-row,
+.filter-subject .ant-form-item-control,
+.filter-subject .ant-form-item-control-input,
+.filter-subject .ant-form-item-control-input-content { width: 100%; min-width: 0; }
 .table-wrap {
   background: white;
   border: 1px solid var(--line);
@@ -272,6 +284,6 @@ td.actions { text-align: right; }
   .login-brand h1 { font-size: 30px; }
   .workspace { flex-direction: column; }
   .sider { width: 100%; border-right: 0; border-bottom: 1px solid var(--line); }
-  .toolbar, .grid { grid-template-columns: 1fr; }
+  .filter-form, .grid { grid-template-columns: 1fr; }
   .page-head { flex-direction: column; align-items: flex-start; }
 }

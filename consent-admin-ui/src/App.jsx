@@ -1,23 +1,41 @@
-import { useState } from "react";
-import ConsentWorkspace from "./ConsentWorkspace.jsx";
-import LoginScreen from "./LoginScreen.jsx";
-import { loadSession, login, logout, saveSession } from "./session.js";
+import { useEffect, useState } from "react";
+import { setSessionExpiredHandler } from "./api/client.js";
+import { login, logout, restoreSession } from "./api/auth.js";
+import ConsentWorkspace from "./pages/ConsentWorkspace.jsx";
+import LoginScreen from "./pages/LoginScreen.jsx";
 
 export default function App() {
-  const [session, setSession] = useState(loadSession);
+  const [session, setSession] = useState(null);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    setSessionExpiredHandler(() => setSession(null));
+    let active = true;
+    restoreSession()
+      .then((next) => {
+        if (active) setSession(next);
+      })
+      .catch(() => {
+        if (active) setSession(null);
+      })
+      .finally(() => {
+        if (active) setReady(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   async function handleLogin(username, password) {
-    const next = await login(username, password);
-    saveSession(next);
-    setSession(next);
+    setSession(await login(username, password));
   }
 
   async function handleLogout() {
-    await logout(session);
-    saveSession(null);
+    await logout();
     setSession(null);
   }
 
+  if (!ready) return null;
   if (!session) return <LoginScreen onLogin={handleLogin} />;
   return <ConsentWorkspace session={session} onLogout={handleLogout} />;
 }
