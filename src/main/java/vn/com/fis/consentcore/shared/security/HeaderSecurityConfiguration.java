@@ -6,16 +6,20 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import vn.com.fis.consentcore.auth.AdminAccessTokenFilter;
 
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnProperty(name = "consent.security.mode", havingValue = "header", matchIfMissing = true)
 class HeaderSecurityConfiguration {
     @Bean
-    SecurityFilterChain headerSecurityFilterChain(HttpSecurity http) throws Exception {
+    SecurityFilterChain headerSecurityFilterChain(HttpSecurity http, AdminAccessTokenFilter adminAccessTokenFilter)
+            throws Exception {
         return http
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(authorize -> authorize.anyRequest().permitAll())
+                .addFilterBefore(adminAccessTokenFilter, UsernamePasswordAuthenticationFilter.class)
                 .build();
     }
 }

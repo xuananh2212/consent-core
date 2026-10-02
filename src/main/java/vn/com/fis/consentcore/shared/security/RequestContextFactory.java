@@ -9,6 +9,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.stereotype.Component;
+import vn.com.fis.consentcore.auth.AdminAuthentication;
 import vn.com.fis.consentcore.shared.api.ActorType;
 import vn.com.fis.consentcore.shared.api.CommandContext;
 
@@ -53,6 +54,9 @@ public class RequestContextFactory {
     private Identity identity(HttpServletRequest request, Authentication authentication) {
         if (authentication == null) {
             authentication = SecurityContextHolder.getContext().getAuthentication();
+        }
+        if (authentication instanceof AdminAuthentication admin) {
+            return new Identity(admin.tenantId(), admin.actorId(), admin.actorType(), "CONSENT_ADMIN");
         }
         if ("jwt".equalsIgnoreCase(securityMode)) {
             if (!(authentication instanceof JwtAuthenticationToken jwtAuthentication)) {

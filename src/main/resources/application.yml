@@ -63,6 +63,13 @@ consent:
     mode: ${CONSENT_SECURITY_MODE:header}
     tenant-claim: ${CONSENT_TENANT_CLAIM:tenant_id}
     actor-type-claim: ${CONSENT_ACTOR_TYPE_CLAIM:actor_type}
+  admin-auth:
+    issuer: http://localhost:8081/admin-auth
+    secret: ${CONSENT_ADMIN_JWT_SECRET:consent-admin-dev-secret-change-me-32}
+    access-token-ttl: 15m
+    refresh-token-ttl: 7d
+    seed-username: admin
+    seed-password: ${CONSENT_ADMIN_SEED_PASSWORD:admin123}
   policy:
     default-max-validity-days: ${CONSENT_DEFAULT_MAX_VALIDITY_DAYS:3650}
   reference:

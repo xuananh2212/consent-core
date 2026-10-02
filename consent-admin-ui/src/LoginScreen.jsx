@@ -7,12 +7,12 @@ export default function LoginScreen({ onLogin }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
-  function submit(event) {
+  async function submit(event) {
     event.preventDefault();
     setError("");
     setBusy(true);
     try {
-      onLogin(username.trim(), password);
+      await onLogin(username.trim(), password);
     } catch (err) {
       setError(err.message);
       setBusy(false);
