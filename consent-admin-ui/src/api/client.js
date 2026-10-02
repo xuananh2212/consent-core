@@ -1,7 +1,10 @@
 import axios from "axios";
 import Cookies from "js-cookie";
 
-const CORE_DOWN = "Consent Core chưa sẵn sàng tại cổng 8081.";
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
+const CORE_DOWN = API_BASE_URL
+  ? `Consent Core chưa sẵn sàng tại ${API_BASE_URL}.`
+  : "Consent Core chưa sẵn sàng.";
 const ACCESS_COOKIE = "accessToken";
 const REFRESH_COOKIE = "refreshToken";
 const PROFILE_COOKIE = "cms_profile";
@@ -12,6 +15,7 @@ let refreshToken = Cookies.get(REFRESH_COOKIE) || null;
 let onSessionExpired = () => {};
 
 const http = axios.create({
+  baseURL: API_BASE_URL,
   headers: { Accept: "application/json" },
   withCredentials: true
 });
