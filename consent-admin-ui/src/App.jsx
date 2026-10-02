@@ -1,29 +1,23 @@
 import { useEffect, useState } from "react";
-import { setSessionExpiredHandler } from "./api/client.js";
-import { login, logout, restoreSession } from "./api/auth.js";
-import ConsentWorkspace from "./pages/ConsentWorkspace.jsx";
+import {
+  BrowserRouter,
+  Navigate,
+  Outlet,
+  Route,
+  Routes,
+} from "react-router-dom";
+import { loadStoredSession, setSessionExpiredHandler } from "./api/client.js";
+import { login, logout } from "./api/auth.js";
+import AdminLayout from "./layouts/AdminLayout.jsx";
+import ConsentPage from "./pages/consents/ConsentPage.jsx";
 import LoginScreen from "./pages/LoginScreen.jsx";
+import NotFoundPage from "./pages/NotFoundPage.jsx";
 
 export default function App() {
-  const [session, setSession] = useState(null);
-  const [ready, setReady] = useState(false);
+  const [session, setSession] = useState(loadStoredSession);
 
   useEffect(() => {
     setSessionExpiredHandler(() => setSession(null));
-    let active = true;
-    restoreSession()
-      .then((next) => {
-        if (active) setSession(next);
-      })
-      .catch(() => {
-        if (active) setSession(null);
-      })
-      .finally(() => {
-        if (active) setReady(true);
-      });
-    return () => {
-      active = false;
-    };
   }, []);
 
   async function handleLogin(username, password) {
@@ -35,7 +29,44 @@ export default function App() {
     setSession(null);
   }
 
-  if (!ready) return null;
-  if (!session) return <LoginScreen onLogin={handleLogin} />;
-  return <ConsentWorkspace session={session} onLogout={handleLogout} />;
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route
+          path="/login"
+          element={
+            session ? (
+              <Navigate to="/consents" replace />
+            ) : (
+              <LoginScreen onLogin={handleLogin} />
+            )
+          }
+        />
+        <Route
+          element={
+            session ? (
+              <AdminLayout session={session} onLogout={handleLogout} />
+            ) : (
+              <Outlet />
+            )
+          }
+        >
+          <Route
+            index
+            element={<Navigate to={session ? "/consents" : "/login"} replace />}
+          />
+          <Route
+            path="consents"
+            element={
+              session ? <ConsentPage /> : <Navigate to="/login" replace />
+            }
+          />
+          <Route
+            path="*"
+            element={<NotFoundPage signedIn={Boolean(session)} />}
+          />
+        </Route>
+      </Routes>
+    </BrowserRouter>
+  );
 }

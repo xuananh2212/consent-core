@@ -16,6 +16,7 @@ export default function LoginScreen({ onLogin }) {
       setBusy(false);
     }
   }
+  console.log("1");
 
   return (
     <section className="login">
@@ -30,12 +31,25 @@ export default function LoginScreen({ onLogin }) {
       <div className="login-panel">
         <div className="card">
           <h2>Đăng nhập</h2>
-          <p className="sub">Dùng tài khoản vận hành để vào danh sách consent.</p>
-          <Form layout="vertical" requiredMark={false} onFinish={submit} disabled={busy}>
+          <p className="sub">
+            Dùng tài khoản vận hành để vào danh sách consent.
+          </p>
+          <Form
+            layout="vertical"
+            requiredMark={false}
+            onFinish={submit}
+            disabled={busy}
+          >
             <Form.Item
               label="Tên đăng nhập"
               name="username"
-              rules={[{ required: true, whitespace: true, message: "Nhập tên đăng nhập." }]}
+              rules={[
+                {
+                  required: true,
+                  whitespace: true,
+                  message: "Nhập tên đăng nhập.",
+                },
+              ]}
             >
               <Input autoComplete="username" />
             </Form.Item>
@@ -46,7 +60,14 @@ export default function LoginScreen({ onLogin }) {
             >
               <Input.Password autoComplete="current-password" />
             </Form.Item>
-            {error ? <Alert type="error" showIcon message={error} style={{ marginBottom: 16 }} /> : null}
+            {error ? (
+              <Alert
+                type="error"
+                showIcon
+                message={error}
+                style={{ marginBottom: 16 }}
+              />
+            ) : null}
             <Button type="primary" htmlType="submit" block loading={busy}>
               Đăng nhập
             </Button>
